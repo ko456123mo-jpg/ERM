@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\JadxController;
+use App\Http\Controllers\FridaController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\ToolController;
@@ -84,6 +85,14 @@ Route::middleware(['auth'])->group(function () {
         ->middleware('permission:applications.view');
     Route::post('/api/applications/{application}/jadx', [JadxController::class, 'decompile'])
         ->middleware('permission:applications.view');
+
+    // Local ADB / Frida server control (requires an authorized device and root)
+    Route::get('/api/frida/status', [FridaController::class, 'status'])
+        ->middleware('permission:tools.mobsf')->name('api.frida.status');
+    Route::post('/api/frida/start', [FridaController::class, 'start'])
+        ->middleware('permission:tools.mobsf')->name('api.frida.start');
+    Route::post('/api/frida/stop', [FridaController::class, 'stop'])
+        ->middleware('permission:tools.mobsf')->name('api.frida.stop');
 
     // Security Tools APIs
     Route::get('/api/tools/status', [ToolController::class, 'status'])->middleware('permission:tools.mobsf');

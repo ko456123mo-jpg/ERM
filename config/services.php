@@ -49,6 +49,8 @@ return [
     'frida' => [
         'url' => env('FRIDA_SERVICE_URL', 'http://127.0.0.1:8001'),
         'timeout' => (int) env('FRIDA_TIMEOUT', 30),
+        'adb_binary' => env('ADB_BINARY', '/usr/bin/adb'),
+        'server_binary' => env('FRIDA_SERVER_BINARY', ''),
     ],
 
     'mobsf' => [
