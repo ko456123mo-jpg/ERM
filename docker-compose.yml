@@ -1,0 +1,90 @@
+services:
+  # ============================================================================
+  # 1. Frida Dynamic Instrumentation Service
+  # ============================================================================
+  frida:
+    build:
+      context: ./docker/frida
+      dockerfile: Dockerfile
+    container_name: erm_frida
+    restart: unless-stopped
+    ports:
+      - "${FRIDA_PORT:-8001}:8001"
+    environment:
+      - FRIDA_ENV=production
+      - ADB_SERVER_SOCKET=tcp:localhost:5037
+    volumes:
+      - erm_frida_data:/home/ermuser/.android
+    networks:
+      - erm-tools-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================================================
+  # 2. MobSF (Mobile Security Framework) Static/Dynamic Analysis Engine
+  # ============================================================================
+  mobsf:
+    image: opensecurity/mobile-security-framework-mobsf:latest
+    container_name: erm_mobsf
+    restart: unless-stopped
+    ports:
+      - "${MOBSF_PORT:-8002}:8000"
+    environment:
+      - MOBSF_API_KEY=${MOBSF_API_KEY:-erm_mobsf_api_key_secure_2026}
+    volumes:
+      - erm_mobsf_data:/root/.MobSF
+    networks:
+      - erm-tools-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/api_docs || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 25s
+
+  # ============================================================================
+  # 3. Objection Mobile Runtime Exploration Service
+  # ============================================================================
+  objection:
+    build:
+      context: ./docker/objection
+      dockerfile: Dockerfile
+    container_name: erm_objection
+    restart: unless-stopped
+    ports:
+      - "${OBJECTION_PORT:-8003}:8003"
+    environment:
+      - OBJECTION_ENV=production
+    volumes:
+      - erm_objection_data:/home/ermuser/.objection
+    networks:
+      - erm-tools-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8003/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# ==============================================================================
+# Isolated Network for Cybersecurity Tools
+# ==============================================================================
+networks:
+  erm-tools-network:
+    name: erm-tools-network
+    driver: bridge
+
+# ==============================================================================
+# Persistent Volumes for Tool State & Artifacts
+# ==============================================================================
+volumes:
+  erm_frida_data:
+    name: erm_frida_data
+  erm_mobsf_data:
+    name: erm_mobsf_data
+  erm_objection_data:
+    name: erm_objection_data
