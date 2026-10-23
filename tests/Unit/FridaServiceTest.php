@@ -12,6 +12,27 @@ use Tests\TestCase;
 
 class FridaServiceTest extends TestCase
 {
+    private string $jwtPrivateKeyPath;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]);
+        $this->jwtPrivateKeyPath = sys_get_temp_dir() . '/erm-test-frida-jwt-' . bin2hex(random_bytes(6)) . '.pem';
+        openssl_pkey_export_to_file($key, $this->jwtPrivateKeyPath);
+        config([
+            'services.fastapi.jwt_private_key_path' => $this->jwtPrivateKeyPath,
+            'services.fastapi.jwt_issuer' => 'erm-laravel',
+            'services.fastapi.jwt_audience' => 'erm-tool-gateway',
+        ]);
+    }
+
+    protected function tearDown(): void
+    {
+        @unlink($this->jwtPrivateKeyPath);
+        parent::tearDown();
+    }
+
     public function test_frida_service_health_check_when_online(): void
     {
         Http::fake([
@@ -24,7 +45,7 @@ class FridaServiceTest extends TestCase
             ], 200)
         ]);
 
-        $service = new FridaService();
+        $service = app(FridaService::class);
         $health = $service->checkHealth();
 
         $this->assertTrue($health['online']);
@@ -38,7 +59,7 @@ class FridaServiceTest extends TestCase
             'http://127.0.0.1:8001/health' => Http::response(null, 500)
         ]);
 
-        $service = new FridaService();
+        $service = app(FridaService::class);
         $health = $service->checkHealth();
 
         $this->assertFalse($health['online']);
@@ -67,7 +88,7 @@ class FridaServiceTest extends TestCase
         $app->name = 'BankApp';
         $app->package_name = 'com.example.bank';
 
-        $service = new FridaService();
+        $service = app(FridaService::class);
         $res = $service->execute($app, 'ssl_pinning_bypass');
 
         $this->assertEquals('success', $res['status']);
@@ -83,7 +104,7 @@ class FridaServiceTest extends TestCase
         ]);
 
         $mobsf = new MobSfService();
-        $objection = new ObjectionService();
+        $objection = app(ObjectionService::class);
         $ai = new AiService();
 
         $this->assertFalse($mobsf->isOnline());
@@ -103,9 +124,9 @@ class FridaServiceTest extends TestCase
             'http://127.0.0.1:8003*' => Http::response(['status' => 'ok', 'service' => 'objection-integration', 'objection_version' => '1.12.5', 'frida_version' => '17.17.0', 'adb_available' => true, 'connected_devices_count' => 3], 200),
         ]);
 
-        $frida = new FridaService();
+        $frida = app(FridaService::class);
         $mobsf = new MobSfService();
-        $objection = new ObjectionService();
+        $objection = app(ObjectionService::class);
 
         $this->assertTrue($frida->isOnline());
         $this->assertTrue($mobsf->isOnline());

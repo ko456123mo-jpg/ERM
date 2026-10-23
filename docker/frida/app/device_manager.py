@@ -45,6 +45,9 @@ class FridaDeviceManager:
     def __init__(self):
         self.sessions: Dict[str, ActiveSession] = {}
         self.remote_hosts: List[str] = []
+        self.adb_bin = shutil.which("adb")
+        self.frida_server_bin = os.getenv("FRIDA_SERVER_BINARY", "/opt/frida/frida-server")
+        self.frida_server_path = "/data/local/tmp/frida-server"
 
     def is_adb_available(self) -> bool:
         return shutil.which("adb") is not None
@@ -96,10 +99,111 @@ class FridaDeviceManager:
 
         return frida.get_local_device()
 
+    def _validate_serial(self, serial: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", serial):
+            raise ValueError("Invalid ADB device serial.")
+
+    def list_adb_devices(self) -> List[Dict[str, str]]:
+        if not self.is_adb_available():
+            raise RuntimeError("ADB is not installed in the tool container.")
+        try:
+            result = subprocess.run(
+                [self.adb_bin, "devices", "-l"], capture_output=True, text=True,
+                timeout=15, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("ADB device listing timed out.") from exc
+        if result.returncode != 0:
+            raise RuntimeError("ADB device listing failed.")
+        devices: List[Dict[str, str]] = []
+        for line in result.stdout.splitlines()[1:]:
+            fields = line.strip().split(maxsplit=1)
+            if len(fields) >= 2 and fields[1].split()[0] in {"device", "offline", "unauthorized"}:
+                devices.append({"serial": fields[0], "state": fields[1].split()[0], "details": fields[1]})
+        return devices
+
+    def _resolve_adb_serial(self, serial: Optional[str]) -> str:
+        devices = [d for d in self.list_adb_devices() if d["state"] == "device"]
+        if serial:
+            self._validate_serial(serial)
+            if any(d["serial"] == serial for d in devices):
+                return serial
+            raise ValueError("Requested device is not connected and authorized.")
+        if len(devices) != 1:
+            if not devices:
+                raise ValueError("No authorized Android device is connected.")
+            raise ValueError("Multiple devices are connected; specify device_serial.")
+        return devices[0]["serial"]
+
+    def _adb(self, args: List[str], timeout: int = 20) -> subprocess.CompletedProcess:
+        if not self.is_adb_available():
+            raise RuntimeError("ADB is not installed in the tool container.")
+        try:
+            return subprocess.run(
+                [self.adb_bin, *args], capture_output=True, text=True,
+                timeout=timeout, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("ADB command timed out.") from exc
+
+    def frida_server_status(self, serial: Optional[str] = None) -> Dict[str, Any]:
+        device = self._resolve_adb_serial(serial)
+        result = self._adb(["-s", device, "shell", "su", "-c", "pidof frida-server"])
+        pid = result.stdout.strip()
+        return {
+            "success": True,
+            "serial": device,
+            "running": result.returncode == 0 and bool(pid),
+            "pid": pid or None,
+        }
+
+    def start_frida_server(self, serial: Optional[str] = None) -> Dict[str, Any]:
+        device = self._resolve_adb_serial(serial)
+        if not os.path.isfile(self.frida_server_bin) or not os.access(self.frida_server_bin, os.R_OK):
+            raise RuntimeError("Configured frida-server binary is not readable in the tool container.")
+
+        push = self._adb(["-s", device, "push", self.frida_server_bin, self.frida_server_path], timeout=120)
+        if push.returncode != 0:
+            logger.error("frida-server push failed for device %s", device)
+            raise RuntimeError("Could not push frida-server to the Android device.")
+
+        chmod = self._adb(["-s", device, "shell", "su", "-c", "chmod 755 " + self.frida_server_path])
+        if chmod.returncode != 0:
+            raise RuntimeError("Could not set frida-server executable permissions; check device root access.")
+
+        start = self._adb([
+            "-s", device, "shell", "su", "-c",
+            "nohup " + self.frida_server_path + " >/data/local/tmp/frida-server.log 2>&1 </dev/null &",
+        ])
+        if start.returncode != 0:
+            raise RuntimeError("frida-server start failed; verify the binary ABI and root access.")
+
+        status = self.frida_server_status(device)
+        if not status["running"]:
+            raise RuntimeError("frida-server did not become available after starting.")
+        return {"success": True, "serial": device, "pid": status["pid"], "message": "Frida server started."}
+
+    def stop_frida_server(self, serial: Optional[str] = None) -> Dict[str, Any]:
+        device = self._resolve_adb_serial(serial)
+        stopped = self._adb([
+            "-s", device, "shell", "su", "-c",
+            "pkill -x frida-server || killall frida-server || true",
+        ])
+        if stopped.returncode != 0:
+            raise RuntimeError("Could not stop frida-server; check root access.")
+        status = self.frida_server_status(device)
+        if status["running"]:
+            raise RuntimeError("frida-server is still running.")
+        return {"success": True, "serial": device, "message": "Frida server stopped."}
+
     def connect_remote_adb(self, host: str, port: int = 5555) -> Dict[str, Any]:
-        # Validate host to avoid command injection
-        if not re.match(r"^[a-zA-Z0-9.\-_]+$", host):
+        # Syntactic validation plus deployment allow-list prevents an authenticated caller
+        # from using the tool service as an unrestricted network pivot.
+        if not re.fullmatch(r"[a-zA-Z0-9.\-_]{1,253}", host):
             raise ValueError("Invalid hostname or IP address format.")
+        allowed_hosts = {item.strip().lower() for item in os.getenv("ADB_ALLOWED_HOSTS", "").split(",") if item.strip()}
+        if host.lower() not in allowed_hosts:
+            raise ValueError("ADB target is not in the configured allow-list.")
         
         if not (1 <= port <= 65535):
             raise ValueError("Port must be between 1 and 65535.")

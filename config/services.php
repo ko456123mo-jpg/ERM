@@ -42,26 +42,33 @@ return [
     */
 
     'fastapi' => [
-        'url' => env('FASTAPI_ENGINE_URL', env('FRIDA_SERVICE_URL', 'http://127.0.0.1:8000/api')),
-        'secret' => env('FASTAPI_SHARED_SECRET', 'erm_enterprise_secret_key_change_in_production_2026'),
+        'url' => env('FASTAPI_ENGINE_URL', env('FRIDA_SERVICE_URL', 'http://127.0.0.1:8001')),
+        'jwt_private_key_path' => env('ERM_JWT_PRIVATE_KEY_PATH', ''),
+        'jwt_issuer' => env('ERM_JWT_ISSUER', 'erm-laravel'),
+        'jwt_audience' => env('ERM_JWT_AUDIENCE', 'erm-tool-gateway'),
+        'timeout' => (int) env('FASTAPI_TIMEOUT', 300),
     ],
 
     'frida' => [
         'url' => env('FRIDA_SERVICE_URL', 'http://127.0.0.1:8001'),
         'timeout' => (int) env('FRIDA_TIMEOUT', 30),
-        'adb_binary' => env('ADB_BINARY', '/usr/bin/adb'),
-        'server_binary' => env('FRIDA_SERVER_BINARY', ''),
     ],
 
     'mobsf' => [
         'url' => env('MOBSF_SERVICE_URL', 'http://127.0.0.1:8002'),
-        'api_key' => env('MOBSF_API_KEY', 'erm_mobsf_api_key_secure_2026'),
+        'api_key' => env('MOBSF_API_KEY', ''),
         'timeout' => (int) env('MOBSF_TIMEOUT', 120),
     ],
 
     'objection' => [
         'url' => env('OBJECTION_SERVICE_URL', 'http://127.0.0.1:8003'),
         'timeout' => (int) env('OBJECTION_TIMEOUT', 60),
+    ],
+
+    'bootstrap_admin' => [
+        'username' => env('DEFAULT_ADMIN_USERNAME', 'admin'),
+        'email' => env('DEFAULT_ADMIN_EMAIL', 'admin@example.invalid'),
+        'password' => env('DEFAULT_ADMIN_PASSWORD', ''),
     ],
 
     'jadx' => [

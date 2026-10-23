@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import subprocess
+import re
 from typing import Dict, List, Optional, Any
 
 import frida
@@ -80,6 +81,11 @@ class ObjectionManager:
         """
         if not self.is_adb_available():
             raise RuntimeError("ADB binary not available in current environment")
+        if not re.fullmatch(r"[A-Za-z0-9.\-_]{1,253}", host):
+            raise ValueError("Invalid hostname or IP address format.")
+        allowed_hosts = {item.strip().lower() for item in os.getenv("ADB_ALLOWED_HOSTS", "").split(",") if item.strip()}
+        if host.lower() not in allowed_hosts:
+            raise ValueError("ADB target is not in the configured allow-list.")
 
         target = f"{host}:{port}"
         logger.info(f"Attempting ADB connection to {target}")

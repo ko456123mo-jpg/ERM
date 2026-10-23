@@ -14,9 +14,11 @@ class ObjectionService implements SecurityToolServiceInterface
     protected int $timeout;
     protected FindingNormalizer $normalizer;
 
-    public function __construct(?FindingNormalizer $normalizer = null)
-    {
-        $this->baseUrl = rtrim(config('services.objection.url', env('OBJECTION_SERVICE_URL', 'http://127.0.0.1:8003')), '/');
+    public function __construct(
+        private readonly InternalJwtService $jwt,
+        ?FindingNormalizer $normalizer = null
+    ) {
+        $this->baseUrl = rtrim((string) config('services.objection.url', 'http://127.0.0.1:8003'), '/');
         $this->timeout = (int) config('services.objection.timeout', 60);
         $this->normalizer = $normalizer ?? new FindingNormalizer();
     }
@@ -41,7 +43,7 @@ class ObjectionService implements SecurityToolServiceInterface
     {
         try {
             $startTime = microtime(true);
-            $response = Http::timeout(4)
+            $response = Http::withToken($this->jwt->issue('health:read'))->timeout(4)
                 ->acceptJson()
                 ->get("{$this->baseUrl}/health");
 
@@ -79,7 +81,7 @@ class ObjectionService implements SecurityToolServiceInterface
     public function getDevices(): array
     {
         try {
-            $response = Http::timeout(5)
+            $response = Http::withToken($this->jwt->issue('devices:read'))->timeout(5)
                 ->acceptJson()
                 ->get("{$this->baseUrl}/devices");
 
@@ -93,7 +95,7 @@ class ObjectionService implements SecurityToolServiceInterface
     public function connectRemoteAdb(string $host, int $port = 5555): array
     {
         try {
-            $response = Http::timeout(10)
+            $response = Http::withToken($this->jwt->issue('devices:manage'))->timeout(10)
                 ->acceptJson()
                 ->post("{$this->baseUrl}/devices/connect", [
                     'host' => $host,
@@ -121,7 +123,7 @@ class ObjectionService implements SecurityToolServiceInterface
             $packageName = $application->package_name ?? "com.erm.target{$application->id}";
             $targetAction = $action === 'default' ? 'ssl_pinning_disable' : $action;
 
-            $response = Http::timeout($this->timeout)
+            $response = Http::withToken($this->jwt->issue('tools:execute'))->timeout($this->timeout)
                 ->acceptJson()
                 ->post("{$this->baseUrl}/tools/objection/execute", [
                     'application_id' => $application->id,

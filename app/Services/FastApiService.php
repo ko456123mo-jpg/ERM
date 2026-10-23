@@ -5,133 +5,95 @@ namespace App\Services;
 use App\Models\Application;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class FastApiService
 {
     protected string $baseUrl;
-    protected string $secretKey;
+    protected int $timeout;
 
-    public function __construct()
+    public function __construct(private readonly InternalJwtService $jwt)
     {
-        $this->baseUrl = config('services.fastapi.url', env('FASTAPI_ENGINE_URL', 'http://127.0.0.1:8000/api'));
-        $this->secretKey = config('services.fastapi.secret', env('FASTAPI_SHARED_SECRET', 'erm_enterprise_secret_key_change_in_production_2026'));
+        $this->baseUrl = rtrim((string) config('services.fastapi.url', 'http://127.0.0.1:8001'), '/');
+        $this->timeout = max(10, (int) config('services.fastapi.timeout', 300));
     }
 
     public function analyzeApk(string $filePath, string $originalFilename, string $sha256): array
     {
-        if (!file_exists($filePath)) {
-            return [
-                'status' => 'failed',
-                'error_message' => 'APK file missing from storage path.'
-            ];
+        if (!is_file($filePath) || !is_readable($filePath)) {
+            return ['status' => 'failed', 'error_message' => 'APK file missing or unreadable in private storage.'];
+        }
+
+        $handle = fopen($filePath, 'rb');
+        if ($handle === false) {
+            return ['status' => 'failed', 'error_message' => 'Could not open APK for analysis.'];
         }
 
         try {
-            $response = Http::withHeaders([
-                'X-ERM-Internal-Key' => $this->secretKey,
-                'Accept' => 'application/json'
-            ])
-            ->timeout(120)
-            ->attach(
-                'file',
-                file_get_contents($filePath),
-                $originalFilename
-            )
-            ->post("{$this->baseUrl}/security/analyze", [
-                'sha256' => $sha256
-            ]);
+            $safeFilename = preg_replace('/[^A-Za-z0-9._-]/', '_', basename($originalFilename)) ?: 'application.apk';
+            $response = Http::withToken($this->jwt->issue('analysis:run'))
+                ->acceptJson()
+                ->timeout($this->timeout)
+                ->attach('file', $handle, $safeFilename, ['Content-Type' => 'application/vnd.android.package-archive'])
+                ->post("{$this->baseUrl}/security/analyze", ['sha256' => $sha256]);
 
             if ($response->successful()) {
-                return $response->json();
+                return $response->json() ?? ['status' => 'failed', 'error_message' => 'Gateway returned invalid JSON.'];
             }
 
-            $body = $response->json();
             return [
                 'status' => 'failed',
-                'error_message' => $body['detail'] ?? "FastAPI returned error HTTP status {$response->status()}"
+                'error_message' => $response->json('detail') ?? "FastAPI returned HTTP {$response->status()}.",
             ];
-        } catch (\Exception $e) {
-            Log::error("FastApiService Connection Failed: " . $e->getMessage());
-            return [
-                'status' => 'failed',
-                'error_message' => "FastAPI engine unreachable at {$this->baseUrl}. " . $e->getMessage()
-            ];
+        } catch (Throwable $exception) {
+            Log::error('FastAPI APK analysis request failed.', ['exception' => $exception::class]);
+            return ['status' => 'failed', 'error_message' => 'Analysis gateway request failed. Check service configuration and logs.'];
+        } finally {
+            fclose($handle);
         }
     }
 
-    /**
-     * Check engine health / connectivity.
-     */
     public function checkEngineHealth(): array
     {
         try {
             $startTime = microtime(true);
-            $response = Http::withHeaders([
-                'X-ERM-Internal-Key' => $this->secretKey,
-                'Accept' => 'application/json',
-            ])
-            ->timeout(5)
-            ->get("{$this->baseUrl}/health");
-
+            $response = Http::withToken($this->jwt->issue('health:read'))
+                ->acceptJson()->timeout(5)->get("{$this->baseUrl}/health");
             $latency = round((microtime(true) - $startTime) * 1000);
 
-            if ($response->successful()) {
-                return [
-                    'online' => true,
-                    'latency_ms' => $latency,
-                    'engine_url' => $this->baseUrl,
-                    'details' => $response->json(),
-                ];
-            }
-
             return [
-                'online' => false,
+                'online' => $response->successful(),
                 'latency_ms' => $latency,
                 'engine_url' => $this->baseUrl,
-                'error' => "HTTP {$response->status()}",
+                'details' => $response->successful() ? $response->json() : null,
+                'error' => $response->successful() ? null : "HTTP {$response->status()}",
             ];
-        } catch (\Exception $e) {
-            return [
-                'online' => false,
-                'latency_ms' => null,
-                'engine_url' => $this->baseUrl,
-                'error' => $e->getMessage(),
-            ];
+        } catch (Throwable $exception) {
+            return ['online' => false, 'latency_ms' => null, 'engine_url' => $this->baseUrl, 'error' => 'Gateway unavailable or JWT configuration invalid.'];
         }
     }
 
-    /**
-     * Execute a dynamic analysis tool (Frida, Objection, etc.) against an application.
-     */
     public function runDynamicTool(string $toolSlug, Application $application, string $action): array
     {
+        if (!in_array($toolSlug, ['frida', 'objection'], true)) {
+            return ['status' => 'error', 'message' => 'Unsupported tool.'];
+        }
+
         try {
-            $response = Http::withHeaders([
-                'X-ERM-Internal-Key' => $this->secretKey,
-                'Accept' => 'application/json',
-            ])
-            ->timeout(60)
-            ->post("{$this->baseUrl}/tools/{$toolSlug}/execute", [
-                'application_id' => $application->id,
-                'package_name' => $application->package_name,
-                'action' => $action,
-            ]);
+            $response = Http::withToken($this->jwt->issue('tools:execute'))
+                ->acceptJson()->timeout($this->timeout)
+                ->post("{$this->baseUrl}/tools/{$toolSlug}/execute", [
+                    'application_id' => $application->id,
+                    'package_name' => $application->package_name,
+                    'action' => $action,
+                ]);
 
-            if ($response->successful()) {
-                return $response->json();
-            }
-
-            return [
-                'status' => 'error',
-                'message' => "Tool '{$toolSlug}' returned HTTP {$response->status()}",
-                'output' => $response->body(),
-            ];
-        } catch (\Exception $e) {
-            return [
-                'status' => 'engine_unavailable',
-                'message' => "FastAPI engine is not running. Tool '{$toolSlug}' queued locally.",
-                'output' => "Connection error: " . $e->getMessage(),
-            ];
+            return $response->successful()
+                ? ($response->json() ?? ['status' => 'error', 'message' => 'Gateway returned invalid JSON.'])
+                : ['status' => 'error', 'message' => "Tool gateway returned HTTP {$response->status()}."];
+        } catch (Throwable $exception) {
+            Log::warning('FastAPI tool execution request failed.', ['tool' => $toolSlug, 'exception' => $exception::class]);
+            return ['status' => 'engine_unavailable', 'message' => 'Tool gateway is unavailable.'];
         }
     }
 }

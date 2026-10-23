@@ -6,3 +6,4 @@ frida-tools>=12.5.0
 pydantic>=2.7.0
 httpx>=0.27.0
 python-dotenv>=1.0.0
+PyJWT[crypto]==2.10.1

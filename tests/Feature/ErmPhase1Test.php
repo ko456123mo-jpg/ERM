@@ -6,23 +6,42 @@ use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class ErmPhase1Test extends TestCase
 {
     use RefreshDatabase;
 
+    private string $testPassword;
+
     protected function setUp(): void
     {
         parent::setUp();
-        $this->seed();
+        $this->testPassword = Str::random(40);
+        $this->seed(\Database\Seeders\RoleSeeder::class);
+        $this->createTestAccounts();
+    }
+
+    private function createTestAccounts(): void
+    {
+        foreach ([['admin', 'Admin', 'Admin'], ['analyst', 'Security Analyst', 'Analyst']] as [$username, $roleName, $name]) {
+            User::create([
+                'username' => $username,
+                'name' => $name,
+                'email' => $username . '@example.test',
+                'password' => Hash::make($this->testPassword),
+                'role_id' => Role::where('name', $roleName)->value('id'),
+                'is_active' => true,
+            ]);
+        }
     }
 
     public function test_admin_login_success(): void
     {
         $response = $this->post('/login', [
             'username' => 'admin',
-            'password' => 'AdminSecret123!'
+            'password' => $this->testPassword
         ]);
 
         $response->assertRedirect('/dashboard');
@@ -33,7 +52,7 @@ class ErmPhase1Test extends TestCase
     {
         $response = $this->post('/login', [
             'username' => 'analyst',
-            'password' => 'AnalystSecret123!'
+            'password' => $this->testPassword
         ]);
 
         $response->assertRedirect('/dashboard');
@@ -75,7 +94,7 @@ class ErmPhase1Test extends TestCase
     {
         $admin = User::where('username', 'admin')->first();
         $this->assertTrue(str_starts_with($admin->password, '$argon2id$'));
-        $this->assertTrue(Hash::check('AdminSecret123!', $admin->password));
+        $this->assertTrue(Hash::check($this->testPassword, $admin->password));
     }
 
     public function test_user_creation_and_deletion(): void
@@ -87,7 +106,7 @@ class ErmPhase1Test extends TestCase
         $createResponse = $this->actingAs($admin)->postJson('/api/users', [
             'username' => 'testuser',
             'email' => 'testuser@erm.local',
-            'password' => 'TestPass123!',
+            'password' => Str::random(40),
             'role_id' => $analystRole->id,
             'is_active' => true
         ]);

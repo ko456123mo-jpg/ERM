@@ -280,3 +280,53 @@ SEED_DATABASE=true
 ### 3. عدم ظهور جهاز Android في Frida
 - تأكد من تشغيل `frida-server` على الهاتف أو المحاكي.
 - استخدم نقطة النهاية `POST /devices/connect` لربط الـ ADB بالـ IP الخاص بالجهاز.
+
+---
+
+## 11. Hardened tool deployment (authoritative security notes)
+
+The current `docker-compose.yml` in this repository defines **only** the Frida, MobSF, and Objection tool services. It does not define the Laravel web application or a MySQL service; the older architecture diagram and quick-start above should not be treated as a complete deployment manifest.
+
+### Required key and secret setup
+
+1. Generate an RSA key pair on the Laravel host or in your secrets-management workflow. Keep the private key available only to Laravel; the tool containers receive the public key only:
+
+   ```bash
+   sudo install -d -m 0700 /etc/erm/keys
+   sudo openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+     -out /etc/erm/keys/jwt-private.pem
+   sudo openssl pkey -in /etc/erm/keys/jwt-private.pem -pubout \
+     -out /etc/erm/keys/jwt-public.pem
+   sudo chmod 0600 /etc/erm/keys/jwt-private.pem
+   sudo chmod 0644 /etc/erm/keys/jwt-public.pem
+   ```
+
+2. Set the matching paths and unique MobSF API key in the untracked `.env` file. Never commit the private key, real API key, or `.env`:
+
+   ```dotenv
+   ERM_JWT_PRIVATE_KEY_PATH=/etc/erm/keys/jwt-private.pem
+   ERM_JWT_PUBLIC_KEY_HOST=/etc/erm/keys/jwt-public.pem
+   ERM_JWT_ISSUER=erm-laravel
+   ERM_JWT_AUDIENCE=erm-tool-gateway
+   MOBSF_API_KEY=<generate-a-unique-random-value>
+   FRIDA_SERVER_BINARY_HOST=/absolute/path/to/frida-server-matching-device-abi
+   ADB_ALLOWED_HOSTS=192.168.1.50,genymotion.example.internal
+   ```
+
+   Generate a MobSF key with a secret manager or `openssl rand -hex 32`. Set `ADB_ALLOWED_HOSTS` to exact, trusted Android device/emulator hostnames or IPs; leave it empty to deny remote ADB connections. Set `DEFAULT_ADMIN_PASSWORD` to a unique value of at least 16 characters only when deliberately bootstrapping an admin. If it is blank, the user seeder creates no account.
+
+3. Place a trusted `frida-server` binary for the Android device ABI in the configured host path. The Frida container mounts it read-only. Its version should match the Frida client/library version in the container.
+
+4. Start only after the required environment values are configured:
+
+   ```bash
+   docker compose config
+   docker compose up -d --build
+   docker compose ps
+   ```
+
+   The tool APIs require scoped RS256 JWTs, are bound to host loopback where published, and have documentation endpoints disabled. JWTs are issued by Laravel for 60 seconds with issuer, audience, subject, unique token ID, and a single explicit scope. FastAPI verifies the signature using only the mounted public key and denies missing, malformed, expired, wrong-audience, wrong-issuer, overlong, or under-scoped tokens. Missing key configuration fails closed.
+
+   Tool API ports are intended for Laravel-to-service traffic; do not expose them directly to the public Internet. If Laravel is itself containerized, configure service URLs to use Docker service names on a deliberately shared network (for example `http://frida:8001`), not `127.0.0.1`.
+
+The Frida and Objection containers use read-only root filesystems, writable temporary filesystems, dropped Linux capabilities, `no-new-privileges`, and CPU/memory/PID limits. MobSF remains writable because its upstream image writes to several paths that have not yet been audited; its resource and privilege restrictions apply, and its published port is loopback-only. Review upstream MobSF write paths before enabling a read-only root filesystem.

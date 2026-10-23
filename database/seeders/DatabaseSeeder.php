@@ -10,6 +10,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             RoleSeeder::class,
+            // Creates only a configured bootstrap administrator; no built-in credentials.
             UserSeeder::class,
             SettingSeeder::class,
         ]);

@@ -1,7 +1,4 @@
 services:
-  # ============================================================================
-  # 1. Frida Dynamic Instrumentation Service
-  # ============================================================================
   frida:
     build:
       context: ./docker/frida
@@ -9,46 +6,66 @@ services:
     container_name: erm_frida
     restart: unless-stopped
     ports:
-      - "${FRIDA_PORT:-8001}:8001"
+      - "127.0.0.1:${FRIDA_PORT:-8001}:8001"
     environment:
-      - FRIDA_ENV=production
-      - ADB_SERVER_SOCKET=tcp:localhost:5037
+      ERM_JWT_PUBLIC_KEY_PATH: /run/erm/jwt-public.pem
+      ERM_JWT_ISSUER: ${ERM_JWT_ISSUER:-erm-laravel}
+      ERM_JWT_AUDIENCE: ${ERM_JWT_AUDIENCE:-erm-tool-gateway}
+      MOBSF_SERVICE_URL: http://mobsf:8000
+      MOBSF_API_KEY: ${MOBSF_API_KEY:?Set a unique MobSF API key}
+      FRIDA_SERVER_BINARY: /opt/frida/frida-server
+      ADB_ALLOWED_HOSTS: ${ADB_ALLOWED_HOSTS:-}
     volumes:
       - erm_frida_data:/home/ermuser/.android
+      - ${FRIDA_SERVER_BINARY_HOST:?Set FRIDA_SERVER_BINARY_HOST to a readable ABI-matched frida-server file}:/opt/frida/frida-server:ro
+      - ${ERM_JWT_PUBLIC_KEY_HOST:?Set ERM_JWT_PUBLIC_KEY_HOST to the matching RSA public key}:/run/erm/jwt-public.pem:ro
     networks:
       - erm-tools-network
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+      - /home/ermuser/.cache:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    mem_limit: 2g
+    cpus: 1.0
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8001/health || exit 1"]
+      # The API itself requires a JWT; use a local TCP liveness check instead.
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8001),2); s.close()"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 10s
 
-  # ============================================================================
-  # 2. MobSF (Mobile Security Framework) Static/Dynamic Analysis Engine
-  # ============================================================================
   mobsf:
-    image: opensecurity/mobile-security-framework-mobsf:latest
+    image: opensecurity/mobile-security-framework-mobsf:v4.5.3
     container_name: erm_mobsf
     restart: unless-stopped
     ports:
-      - "${MOBSF_PORT:-8002}:8000"
+      - "127.0.0.1:${MOBSF_PORT:-8002}:8000"
     environment:
-      - MOBSF_API_KEY=${MOBSF_API_KEY:-erm_mobsf_api_key_secure_2026}
+      MOBSF_API_KEY: ${MOBSF_API_KEY:?Set a unique MobSF API key}
     volumes:
       - erm_mobsf_data:/root/.MobSF
     networks:
       - erm-tools-network
+    # MobSF writes to several paths in its upstream image; keep rootfs writable until
+    # those paths are audited and mounted explicitly. Resource and privilege controls apply.
+    mem_limit: 2g
+    cpus: 1.0
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/api_docs || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api_docs >/dev/null || exit 1"]
       interval: 20s
       timeout: 10s
       retries: 5
       start_period: 25s
 
-  # ============================================================================
-  # 3. Objection Mobile Runtime Exploration Service
-  # ============================================================================
   objection:
     build:
       context: ./docker/objection
@@ -56,31 +73,42 @@ services:
     container_name: erm_objection
     restart: unless-stopped
     ports:
-      - "${OBJECTION_PORT:-8003}:8003"
+      - "127.0.0.1:${OBJECTION_PORT:-8003}:8003"
     environment:
-      - OBJECTION_ENV=production
+      OBJECTION_ENV: production
+      ERM_JWT_PUBLIC_KEY_PATH: /run/erm/jwt-public.pem
+      ERM_JWT_ISSUER: ${ERM_JWT_ISSUER:-erm-laravel}
+      ERM_JWT_AUDIENCE: ${ERM_JWT_AUDIENCE:-erm-tool-gateway}
+      ADB_ALLOWED_HOSTS: ${ADB_ALLOWED_HOSTS:-}
     volumes:
       - erm_objection_data:/home/ermuser/.objection
+      - erm_objection_android:/home/ermuser/.android
+      - ${ERM_JWT_PUBLIC_KEY_HOST:?Set ERM_JWT_PUBLIC_KEY_HOST to the matching RSA public key}:/run/erm/jwt-public.pem:ro
     networks:
       - erm-tools-network
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+      - /home/ermuser/.cache:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    mem_limit: 2g
+    cpus: 1.0
+    pids_limit: 100
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8003/health || exit 1"]
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8003),2); s.close()"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 10s
 
-# ==============================================================================
-# Isolated Network for Cybersecurity Tools
-# ==============================================================================
 networks:
   erm-tools-network:
     name: erm-tools-network
     driver: bridge
 
-# ==============================================================================
-# Persistent Volumes for Tool State & Artifacts
-# ==============================================================================
 volumes:
   erm_frida_data:
     name: erm_frida_data
@@ -88,3 +116,5 @@ volumes:
     name: erm_mobsf_data
   erm_objection_data:
     name: erm_objection_data
+  erm_objection_android:
+    name: erm_objection_android

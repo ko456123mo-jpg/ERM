@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class ApplicationSecurityTest extends TestCase
@@ -20,10 +21,17 @@ class ApplicationSecurityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->seed();
-
-        $this->admin = User::where('username', 'admin')->first();
-        $this->analyst = User::where('username', 'analyst')->first();
+        $this->seed(\Database\Seeders\RoleSeeder::class);
+        $adminRole = Role::where('name', 'Admin')->firstOrFail();
+        $analystRole = Role::where('name', 'Security Analyst')->firstOrFail();
+        $this->admin = User::create([
+            'username' => 'test-admin', 'name' => 'Test Admin', 'email' => 'admin@example.test',
+            'password' => Hash::make(bin2hex(random_bytes(32))), 'role_id' => $adminRole->id, 'is_active' => true,
+        ]);
+        $this->analyst = User::create([
+            'username' => 'test-analyst', 'name' => 'Test Analyst', 'email' => 'analyst@example.test',
+            'password' => Hash::make(bin2hex(random_bytes(32))), 'role_id' => $analystRole->id, 'is_active' => true,
+        ]);
     }
 
     public function test_unauthenticated_access_redirected(): void

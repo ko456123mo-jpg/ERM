@@ -18,7 +18,7 @@ class MobSfService implements SecurityToolServiceInterface
     public function __construct(?FindingNormalizer $normalizer = null)
     {
         $this->baseUrl = rtrim(config('services.mobsf.url', env('MOBSF_SERVICE_URL', 'http://127.0.0.1:8002')), '/');
-        $this->apiKey = config('services.mobsf.api_key', env('MOBSF_API_KEY', 'erm_mobsf_api_key_secure_2026'));
+        $this->apiKey = config('services.mobsf.api_key', env('MOBSF_API_KEY', ''));
         $this->timeout = (int) config('services.mobsf.timeout', 120);
         $this->normalizer = $normalizer ?? new FindingNormalizer();
     }

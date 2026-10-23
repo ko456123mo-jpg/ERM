@@ -40,3 +40,6 @@ auth.json
 **/__pycache__/
 *.py[cod]
 /reset_passwords.php
+
+# Service JWT private/public key material
+/storage/keys/
